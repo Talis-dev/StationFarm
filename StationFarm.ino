@@ -3,8 +3,8 @@
 #include <HTTPClient.h>
 #include <WebServer.h>
 #include <base64.h> 
-
 #include <DHT.h>
+
 #define DHT1_PIN  21 // ESP32 pin GPIO21 connected to DHT11 sensor
 #define DHT2_PIN  19 
 #define BUTTON_PIN 18 // GPIO18 connected to button
@@ -18,6 +18,11 @@ String serverName = "https://node.myhome474.fun/granja21";
   float tempC2 = 0;
 int buttonState = 0;
 
+unsigned long lastTime = 0;
+unsigned long lastCommandCheck = 0;
+unsigned long commandCheckInterval = 10000;
+
+
 DHT dht1(DHT1_PIN, DHT11);
 DHT dht2(DHT2_PIN, DHT11);
 WiFiManager wifiManager;
@@ -28,14 +33,8 @@ void setup() {
 
 wifiManager.autoConnect("StationFarm");
 
-  server.on("/restart", HTTP_GET, []() {
-    server.send(200, "text/plain", "Reiniciando ESP32...");
-    ESP.restart();
-  });
-  server.begin();
   dht1.begin(); // initialize the DHT11 sensor
   dht2.begin();
-
 
   pinMode(BUTTON_PIN, INPUT_PULLDOWN);
   pinMode(LED_PIN, OUTPUT);
@@ -43,8 +42,6 @@ wifiManager.autoConnect("StationFarm");
 }
 
 void loop() {
-
-static unsigned long lastTime = 0;
 unsigned long now = millis();
 
 if(!digitalRead(BUTTON_PIN)){
@@ -53,10 +50,14 @@ buttonState = 1;
 
   if (now - lastTime >= 3000) {  
     readDhtSensors();
-        sendSensorData();
-        lastTime = now;
+    sendSensorData();
+    lastTime = now;
     }
-server.handleClient();
+
+  if ((now - lastCommandCheck) > commandCheckInterval) {
+    checkForCommands();
+    lastCommandCheck = now;
+  }
 }
 
 
@@ -130,4 +131,31 @@ void readDhtSensors(){
     Serial.println("°C");
   }
 
+}
+
+
+
+void checkForCommands() {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    http.begin("https://node.myhome474.fun/granja21/command");
+        String auth = base64::encode("admin:415263");
+        http.addHeader("Authorization", "Basic " + auth);
+        http.addHeader("Content-Type", "application/json");
+        
+    int httpResponseCode = http.GET();
+
+    if (httpResponseCode > 0) {
+      String response = http.getString();
+      Serial.println("Command response: " + response);  // Resposta da API
+      if (response == "restart") {
+        ESP.restart();
+      }
+    } else {
+      Serial.print("Erro na solicitação GET: ");
+      Serial.println(httpResponseCode);
+    }
+
+    http.end();  // Fecha a conexão
+  }
 }
